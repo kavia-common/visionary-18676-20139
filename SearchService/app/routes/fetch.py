@@ -2,7 +2,7 @@ from flask_smorest import Blueprint
 from flask.views import MethodView
 import re
 import requests
-from webargs import fields
+from marshmallow import Schema, fields
 
 # Blueprint for Fetch endpoint with documentation metadata
 blp = Blueprint(
@@ -21,12 +21,26 @@ def _is_valid_http_url(url: str) -> bool:
         return False
     return bool(_HTTP_URL_RE.match(url.strip()))
 
-# Request schema using webargs
-fetch_args = {
-    "url": fields.String(required=True, description="HTTP(S) URL to fetch content from."),
-    "timeout": fields.Float(required=False, missing=10.0, description="Optional request timeout in seconds (default 10s, min 1s, max 30s)."),
-    "as_text": fields.Boolean(required=False, missing=True, description="Return decoded text (true) or raw content base64 (false). Only text is supported currently."),
-}
+# Request schema using marshmallow
+class FetchRequestSchema(Schema):
+    url = fields.String(required=True, description="HTTP(S) URL to fetch content from.")
+    timeout = fields.Float(required=False, missing=10.0, description="Optional request timeout in seconds (default 10s, min 1s, max 30s).")
+    as_text = fields.Boolean(required=False, missing=True, description="Return decoded text (true) or raw content base64 (false). Only text is supported currently.")
+
+# Response schemas
+class FetchSuccessResponseSchema(Schema):
+    status = fields.String(example="success")
+    message = fields.String(example="Content fetched")
+    content = fields.String(example="<html>...</html>")
+    content_type = fields.String(example="text/html; charset=UTF-8")
+    url = fields.String(example="https://example.com")
+    http_status = fields.Integer(example=200)
+
+class FetchErrorResponseSchema(Schema):
+    status = fields.String(example="error")
+    message = fields.String(example="Invalid URL or upstream fetch failed")
+    details = fields.String(example="Error details")
+    url = fields.String(required=False, example="https://example.com")
 
 
 @blp.route("/fetch")
@@ -52,8 +66,13 @@ class FetchContent(MethodView):
         - Only HTTP and HTTPS schemes are allowed.
         - This is a utility/testing endpoint; no data is persisted.
     """
-    @blp.arguments(fetch_args, location="json")
-    @blp.response(200, example={"status": "success", "message": "Content fetched", "content": "<html>...</html>", "content_type": "text/html; charset=UTF-8", "url": "https://example.com"})
+    @blp.arguments(FetchRequestSchema, location="json")
+    @blp.response(200, FetchSuccessResponseSchema)
+    @blp.response(400, FetchErrorResponseSchema)
+    @blp.response(408, FetchErrorResponseSchema)
+    @blp.response(422, FetchErrorResponseSchema)
+    @blp.response(502, FetchErrorResponseSchema)
+    @blp.response(500, FetchErrorResponseSchema)
     @blp.doc(summary="Fetch raw web content by URL", description="Accepts a URL and returns the fetched content as plain text/HTML. Validates HTTP/HTTPS scheme and handles errors gracefully.", tags=["Fetch"])
     def post(self, args):
         url = args.get("url", "").strip()
